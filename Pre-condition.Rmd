@@ -1,0 +1,316 @@
+---
+title: "Covid Pre-Condition"
+author: "Rafael Pereira"
+date: "2/1/2021"
+output:
+  pdf_document:
+    fig_caption: yes        
+    includes:  
+      in_header: my_header.tex
+---
+[//]: # "The .tex file is used to make the plots stay in their position when knit to pdf, is the only way I found to achieve this, otherwise, the plots where in the wrong places. The .tex is in the GitHub's repository: https://github.com/RPereira98/Covid-Pre-condition"
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+ This algorithm use data to predict if a covid positive patient will need hospitalization or not based in his/her pre-conditions. The data used for this is COVID-19 patient pre-condition dataset (https://www.kaggle.com/tanmoyx/covid19-patient-precondition-dataset) acquired from the Mexican government. The variable that will be predicted is the type of patient (variable's name: patient_type), 1 for outpatient (a patient who receives medical treatment without being admitted to a hospital) and 2 for inpatient (a patient who's been admitted to hospital for medical treatment).The pre-conditions (predictors) used for this are:sex of the patient (1 for female and 2 for male, variable's name: sex),the age of the patient (variable's name: age). In the next variables 1 indicates that the patient has it and 2 that the patient doesn't have it: pneumonia (variable's name: pneumonia), diabetes(variable's name: diabetes),chronic obstructive pulmonary disease (variable's name: copd),asthma (variable's name: asthma),immunosuppression (variable's name: inmsupr),hypertension (variable's name: hypertension),other diseases (variable's name: other_disease), cardiovascular diseases(variable's name:cardiovascular), obesity (variable's name: obesity),chronic kidney disease (variable's name: renal_chronic) and smoking habits (variable's name: tobacco). Only the covid positive patients will be used for the models(variable's  name: covid_res)
+ For the algorithm are used five models: linear discriminant analysis (LDA), generalized linear model (LGM), quadratic discriminant analysis (QDA), classification and regression tree (RPART) and an ensemble of the other four models.
+
+## Analisis
+
+The first step is the installation of the libraries that will be used:
+```{r warning=FALSE,message=FALSE}
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+if(!require(gridExtra)) install.packages("gridExtra", repos ="http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+```
+
+The data is loaded from the url in cvs format, after that is read and stored in a data frame:
+```{r warning=FALSE,message=FALSE}
+url <- "https://github.com/RPereira98/Covid-Pre-condition/raw/main/covid.zip"
+dl <- tempfile()
+download.file(url, dl)
+unzip(dl,"covid.csv")
+covid_dat <- read_csv("covid.csv")
+covid_dat<-data.frame(covid_dat)
+```
+
+Only the covid positive patients are important for the models:
+```{r warning=FALSE,message=FALSE}
+ind<- which(covid_dat$covid_res==1)
+covid_dat<-covid_dat[ind,]
+```
+
+Some variables will not be used for the analysis (dates,ID of patients, pregnancy, intubation, ICU):
+```{r warning=FALSE,message=FALSE}
+covid_dat<-covid_dat[,-c(1,4,5,6,7,10,21,22,23)]
+```
+
+The values 97, 98 and 99 are NAs, not useful:
+```{r warning=FALSE,message=FALSE}
+ind<- which((covid_dat$pneumonia%in%c(97,98,99))|(covid_dat$diabetes%in%c(97,98,99))|(covid_dat$copd%in%c(97,98,99))|(covid_dat$asthma%in%c(97,98,99))|(covid_dat$inmsupr%in%c(97,98,99))|(covid_dat$hypertension%in%c(97,98,99))|(covid_dat$other_disease%in%c(97,98,99))|(covid_dat$cardiovascular%in%c(97,98,99))|(covid_dat$obesity%in%c(97,98,99))|(covid_dat$renal_chronic%in%c(97,98,99))|(covid_dat$tobacco%in%c(97,98,99)))
+covid_dat<-covid_dat[-ind,]
+```
+
+There are more outpatients than inpatients, the proportion of outpatients is:
+```{r warning=FALSE,message=FALSE}
+mean(covid_dat$patient_type==1)
+```
+
+Doing a visual inspection of the data:
+First parameter to analyze: Sex
+\begin{figure}[p]
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(sex==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFCC")+ggtitle("Female")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(sex==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#99CCFF")+ggtitle("Male")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+Both sexes have more outpatients than inpatients,with  males having a bigger proportion of inpatients than females.
+
+Parameter: Pneumonia
+\begin{figure}[p]
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(pneumonia==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#FFCC99")+ggtitle("Pneumonia")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(pneumonia==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFFF")+ggtitle("No pneumonia")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+More patients with pneumonia are inpatients than outpatients, and more patients without pneumonia are outpatients than inpatients.
+
+Parameter: Diabetes
+\begin{figure}[p]
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(diabetes==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#FFCC99")+ggtitle("Diabetes")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(diabetes==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFFF")+ggtitle("No diabetes")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+There are slightly more patients with diabetes that are inpatients than outpatients, and there are more patients without diabetes that are outpatients than inpatients.
+
+Parameter: Chronic obstructive pulmonary disease
+\begin{figure}[p]
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(copd==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#FFCC99")+ggtitle("COPD")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(copd==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFFF")+ggtitle("No COPD")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+There are more patients with COPD that are inpatients than outpatients and there are more outpatients without COPD than inpatients without COPD.
+
+Parameter: Asthma
+\begin{figure}[p]
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(asthma==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#FFCC99")+ggtitle("Asthma")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(asthma==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFFF")+ggtitle("No asthma")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+Both patients with and without asthma have more outpatients than inpatients.
+
+Parameter: Immunosuppression
+\begin{figure}[p]
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(inmsupr==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#FFCC99")+ggtitle("Immunosuppressed")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(inmsupr==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFFF")+ggtitle("No immunosuppressed")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+There are slightly more patients with immunosuppression that are inpatient than outpatient and there are more outpatients without immunosuppression than inpatients.
+
+Parameter: Hypertension
+\begin{figure}[p]
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(hypertension==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#FFCC99")+ggtitle("Hypertension")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(hypertension==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFFF")+ggtitle("No hypertension")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+There are slightly more patients with hypertension that are inpatients than outpatients and more patients without hypertension that are outpatients than inpatients.
+
+Parameter: Other diseases
+\begin{figure}[p]
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(other_disease==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#FFCC99")+ggtitle("Other diseases")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(other_disease==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFFF")+ggtitle("No other diseases")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+There are slightly more outpatients with other diseases than inpatients and there are more outpatients without other diseases than inpatients.
+
+Parameter: Cardiovascular diseases
+\begin{figure}[p]
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(cardiovascular==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#FFCC99")+ggtitle("Cardiovascular  diseases")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(cardiovascular==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFFF")+ggtitle("No cardiovascular diseases")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+There are slightly more inpatients with other cardiovascular diseases than outpatients and there are more outpatients without cardiovascular diseases than inpatients. 
+
+Parameter: Obesity
+\begin{figure}[p]
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(obesity==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#FFCC99")+ggtitle("Obesity")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(obesity==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFFF")+ggtitle("No obesity")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+There are slightly more outpatients with obesity than inpatients and there are more outpatients without obesity than inpatients.
+
+Parameter:Chronic kidney disease
+\begin{figure}[p]
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(renal_chronic==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#FFCC99")+ggtitle("Chronic kidney")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(renal_chronic==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFFF")+ggtitle("No chronic kidney")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+There are more inpatients with chronic kidney disease than outpatients and more outpatients without chronic kidney disease than inpatients.
+
+Parameter: Smoking habit
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+p1<-covid_dat%>%filter(tobacco==1)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#FFCC99")+ggtitle("Smoking habit")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+p2<-covid_dat%>%filter(tobacco==2)%>%ggplot(aes(as.factor(patient_type))) + geom_bar(color="black",fill="#CCFFFF")+ggtitle("No smoking habit")+
+theme(plot.title = element_text(hjust = 0.5))+labs(x="Patient type")
+grid.arrange(p1,p2,ncol=2)
+```
+\end{figure}
+
+With or without smoking habits the number of outpatients is bigger than the number of inpatients.
+
+Parameter: Age
+```{r echo=FALSE,message=FALSE,fig.align='center',fig.height = 3, fig.width = 8}
+covid_dat%>%ggplot(aes(age))+geom_histogram(color="black",fill="#FFFFCC")+ggtitle("Number of patients per age")+facet_grid(~patient_type)
+```
+The proportion of inpatients change with age, it grows with the age.
+
+Splitting the data in a training and test sets. The test set will be 20% of the original data set.
+```{r warning=FALSE,message=FALSE}
+set.seed(1, sample.kind="Rounding")
+test_index <- createDataPartition(y = covid_dat$patient_type, times = 1, p = 0.2, list = FALSE)
+train_set<-covid_dat[-test_index,]
+test_set<-covid_dat[test_index,]
+```
+
+The first model will be linear discriminatory analysis.
+```{r warning=FALSE,message=FALSE}
+train_lda<-train(as.factor(patient_type)~as.factor(sex)+as.factor(pneumonia)+age+
+as.factor(diabetes)+as.factor(copd)+as.factor(asthma)+as.factor(inmsupr)+
+as.factor(hypertension)+as.factor(other_disease)+as.factor(cardiovascular)+
+as.factor(obesity)+as.factor(renal_chronic)+as.factor(tobacco),
+data =train_set,method="lda")
+lda_pred<-predict(train_lda,test_set)
+cm<-confusionMatrix(table(as.numeric(lda_pred), test_set$patient_type))
+lda_ac<-cm$overall[["Accuracy"]]
+```
+
+The second model will be a generalized linear model.
+```{r warning=FALSE,message=FALSE}
+train_glm<-train(as.factor(patient_type)~as.factor(sex)+as.factor(pneumonia)+age+
+as.factor(diabetes)+as.factor(copd)+as.factor(asthma)+as.factor(inmsupr)+
+as.factor(hypertension)+as.factor(other_disease)+as.factor(cardiovascular)+
+as.factor(obesity)+as.factor(renal_chronic)+as.factor(tobacco),
+method="glm",data =train_set)
+glm_pred<-predict(train_glm,test_set)
+cm<-confusionMatrix(table(as.numeric(glm_pred), test_set$patient_type))
+glm_ac<-cm$overall[["Accuracy"]]
+```
+
+The third model will be a quadratic discriminatory analysis.
+```{r warning=FALSE,message=FALSE}
+train_qda<-train(as.factor(patient_type)~as.factor(sex)+as.factor(pneumonia)+age+
+as.factor(diabetes)+as.factor(copd)+as.factor(asthma)+as.factor(inmsupr)+
+as.factor(hypertension)+as.factor(other_disease)+as.factor(cardiovascular)+
+as.factor(obesity)+as.factor(renal_chronic)+as.factor(tobacco),
+data =train_set,method="qda")
+qda_pred<-predict(train_qda,test_set)
+cm<-confusionMatrix(table(as.numeric(qda_pred), test_set$patient_type))
+qda_ac<-cm$overall[["Accuracy"]]
+```
+
+The fourth model will be a classification tree.
+```{r warning=FALSE,message=FALSE}
+train_rpart<-train(as.factor(patient_type)~as.factor(sex)+as.factor(pneumonia)+age+
+as.factor(diabetes)+as.factor(copd)+as.factor(asthma)+as.factor(inmsupr)+
+as.factor(hypertension)+as.factor(other_disease)+as.factor(cardiovascular)+
+as.factor(obesity)+as.factor(renal_chronic)+as.factor(tobacco),
+data = train_set,method="rpart")
+rpart_pred<-predict(train_rpart,test_set)
+cm<-confusionMatrix(table(as.numeric(rpart_pred), test_set$patient_type))
+rpart_ac<-cm$overall[["Accuracy"]]
+```
+
+The fifth model will be an ensemble of the other four models.If the majority of the models predict  inpatient, the ensemble will predict inpatient. If the majority of models predict outpatient it will predict outpatient. If there is a tie, the ensemble will predict an outpatient, because there are more outpatients.
+```{r warning=FALSE,message=FALSE}
+ensemble<-data.frame(LDA=as.numeric(lda_pred),
+                     QDA=as.numeric(qda_pred),
+                     GLM=as.numeric(glm_pred),
+                     RPART=as.numeric(rpart_pred))
+ensemble_pred<-ifelse(rowMeans(ensemble)<=(1*2+2*2)/4,1,2)
+cm<-confusionMatrix(table(ensemble_pred, test_set$patient_type))
+ensemble_ac<-cm$overall[["Accuracy"]]
+```
+
+Finally a accuracy data.frame is created:
+```{r warning=FALSE,message=FALSE}
+accuracy<-data.frame(row.names = c("LDA","GLM","QDA","RPART","ENSEMBLE"),
+                     Accuracy=c(lda_ac,glm_ac,qda_ac,rpart_ac,ensemble_ac))
+```
+
+## Results
+The accuracy of the models are:
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+accuracy
+```
+
+ The ensemble has a better performance than LDA,GLM and QDA models but inferior than the RPART model's performance. All the models have an accuracy around of 86%, only the QDA method is inferior to that with an accuracy of 0.842. The accuracy of the others models doesn't vary much, only changing from the third decimal. One of the motives that the QDA model has a considerably low accuracy in comparison to the other models is that there are 13 predictors and QDA doesn't perform well with many predictors.
+ 
+## Conclusion
+ The analysis of the plots are based on the sample, for confirmation of those conclusions more studies are needed.
+ The models could help to prioritize the medical attention of patients that are more susceptible to  need a hospitalization based  on the pre-conditions. 
+ None of the models uses pregnancy, dates, intubation or UCI to make predictions, using these or more parameters (others pre-conditions as diet,physical activity, consumption of alcohol,etc.) could help to improve the performance of the models.
